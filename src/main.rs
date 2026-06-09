@@ -1,4 +1,4 @@
-use std::{fs, path::PathBuf, process};
+use std::{fs, iter::Peekable, path::PathBuf, process, str::Chars};
 
 use clap::Parser;
 
@@ -8,35 +8,40 @@ struct Args {
 }
 #[derive(PartialEq)]
 enum Token {
-    CLOSE,
-    OPEN,
-    COLON,
-    COMMA,
-    STRING(String),
+    Close,
+    Open,
+    Colon,
+    Comma,
+    String(String),
+    True,
+    False,
+    Number(f64),
+    Null,
 }
 
 fn lex(input: &str) -> Result<Vec<Token>, String> {
     let mut token = Vec::new();
     let mut chars = input.chars().peekable();
     while let Some(&char) = chars.peek() {
-        match &char {
+        match char {
             '{' => {
-                token.push(Token::OPEN);
+                token.push(Token::Open);
                 chars.next();
             }
             '}' => {
-                token.push(Token::CLOSE);
+                token.push(Token::Close);
                 chars.next();
             }
-            ' ' | '\t' | '\n' | '\r' => {
+            c if c.is_whitespace() => {
                 chars.next();
             }
+
             ':' => {
-                token.push(Token::COLON);
+                token.push(Token::Colon);
                 chars.next();
             }
             ',' => {
-                token.push(Token::COMMA);
+                token.push(Token::Comma);
                 chars.next();
             }
             '"' => {
@@ -59,8 +64,47 @@ fn lex(input: &str) -> Result<Vec<Token>, String> {
                 if !closed {
                     return Err("Unterminated string literal".to_string());
                 }
-                token.push(Token::STRING(content));
+                token.push(Token::String(content));
             }
+            't' => {
+                chars.next();
+                if match_keyword(&mut chars, "rue") {
+                    token.push(Token::True);
+                } else {
+                    return Err("Invalid token: expected 'true'".to_string());
+                }
+            }
+            'f' => {
+                chars.next();
+                if match_keyword(&mut chars, "alse") {
+                    token.push(Token::False);
+                } else {
+                    return Err("Invalid token: expected 'false'".to_string());
+                }
+            }
+            'n' => {
+                chars.next();
+                if match_keyword(&mut chars, "ull") {
+                    token.push(Token::Null);
+                } else {
+                    return Err("Invalid token: expected 'null'".to_string());
+                }
+            }
+            '0'..='9' | '-' => {
+                let mut num_str = String::new();
+                while let Some(&c) = chars.peek() {
+                    if c.is_digit(10) || c == '-' || c == '.' {
+                        num_str.push(chars.next().unwrap());
+                    } else {
+                        break;
+                    }
+                }
+                let num = num_str
+                    .parse::<f64>()
+                    .map_err(|_| format!("Invalid Number {}", num_str))?;
+                token.push(Token::Number(num));
+            }
+
             _ => {
                 return Err(format!("Unexpected character: '{}'", char));
             }
@@ -73,15 +117,15 @@ fn parse(tokens: &[Token]) -> Result<(), String> {
     if tokens.is_empty() {
         return Err("Empty input is invalid JSON".to_string());
     }
-    if tokens[0] != Token::OPEN {
+    if tokens[0] != Token::Open {
         return Err("JSON must start with '{'".to_string());
     }
-    if tokens.len() == 2 && tokens[1] == Token::CLOSE {
+    if tokens.len() == 2 && tokens[1] == Token::Close {
         return Ok(());
     }
     let mut i = 1;
     while i < tokens.len() {
-        if tokens[i] == Token::CLOSE {
+        if tokens[i] == Token::Close {
             if i == tokens.len() - 1 {
                 return Ok(());
             } else {
@@ -89,10 +133,10 @@ fn parse(tokens: &[Token]) -> Result<(), String> {
             }
         }
         match &tokens[i] {
-            Token::STRING(_) => i += 1,
+            Token::String(_) => i += 1,
             _ => return Err("Expected a string key inside JSON object".to_string()),
         }
-        if i >= tokens.len() || tokens[i] != Token::COLON {
+        if i >= tokens.len() || tokens[i] != Token::Colon {
             return Err("Expected ':' separator after key".to_string());
         }
         i += 1;
@@ -101,21 +145,30 @@ fn parse(tokens: &[Token]) -> Result<(), String> {
             return Err("Expected value after ':'".to_string());
         }
         match &tokens[i] {
-            Token::STRING(_) => i += 1,
+            Token::String(_) => i += 1,
             _ => return Err("Expected a string key inside JSON object".to_string()),
         }
         if i <= tokens.len() {
-            if tokens[i] == Token::COMMA {
+            if tokens[i] == Token::Comma {
                 i += 1;
-                if i < tokens.len() && tokens[i] == Token::CLOSE {
+                if i < tokens.len() && tokens[i] == Token::Close {
                     return Err("Trailing comma is invalid in JSON".to_string());
                 }
-            } else if tokens[i] != Token::CLOSE {
+            } else if tokens[i] != Token::Close {
                 return Err("Expected ',' or closing '}' after key-value pair".to_string());
             }
         }
     }
     Err("Missing closing brace '}'".to_string())
+}
+
+fn match_keyword(chars: &mut Peekable<Chars<'_>>, expected: &str) -> bool {
+    for c in expected.chars() {
+        if Some(c) != chars.next() {
+            return false;
+        }
+    }
+    true
 }
 
 fn main() {
