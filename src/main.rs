@@ -1,12 +1,12 @@
 use std::{fs, iter::Peekable, path::PathBuf, process, str::Chars};
 
-use clap::Parser;
+use clap::{Parser, builder::Str};
 
 #[derive(Parser, Debug)]
 struct Args {
     file: PathBuf,
 }
-#[derive(PartialEq)]
+#[derive(PartialEq, Debug)]
 enum Token {
     Close,
     Open,
@@ -17,6 +17,50 @@ enum Token {
     False,
     Number(f64),
     Null,
+}
+
+#[derive(Debug)]
+enum JsonValue {
+    String(String),
+    Number(f64),
+    Null,
+    Boolean(bool),
+}
+
+struct JsonParser<'a> {
+    tokens: &'a [Token],
+    pos: usize,
+}
+
+impl<'a> JsonParser<'a> {
+    fn new(tokens: &'a [Token]) -> Self {
+        Self { tokens, pos: 0 }
+    }
+    fn peek(&self) -> Option<&Token> {
+        self.tokens.get(self.pos)
+    }
+    fn advance(&mut self) -> Option<&Token> {
+        let token = self.tokens.get(self.pos);
+        self.pos += 1;
+        token
+    }
+    fn parse(&mut self) -> Result<JsonValue, String> {
+        match self.peek() {
+            Some(Token::Open) => self.parse_object(),
+            _ => Err("Invalid JSON: Expected '{'".to_string()),
+        }
+    }
+
+    fn parse_object(&mut self) -> Result<JsonValue, String> {
+        self.advance();
+        while let Some(token) = self.peek() {
+            if *token == Token::Close {
+                self.advance();
+                return Ok(JsonValue::Null);
+            }
+        }
+        Err("Expected '}'".to_string())
+    }
 }
 
 fn lex(input: &str) -> Result<Vec<Token>, String> {
@@ -110,6 +154,7 @@ fn lex(input: &str) -> Result<Vec<Token>, String> {
             }
         };
     }
+    println!("{:?}", token);
     Ok(token)
 }
 
