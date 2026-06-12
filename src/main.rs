@@ -1,6 +1,6 @@
 use std::{collections::HashMap, fs, iter::Peekable, path::PathBuf, process, str::Chars};
 
-use clap::{Parser, builder::Str};
+use clap::Parser;
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -25,7 +25,6 @@ enum JsonValue {
     Number(f64),
     Null,
     Boolean(bool),
-    Object(HashMap<String, JsonValue>),
 }
 
 struct JsonParser<'a> {
@@ -69,7 +68,7 @@ impl<'a> JsonParser<'a> {
         while let Some(token) = self.peek() {
             if *token == Token::Close {
                 self.advance();
-                return Ok(JsonValue::Object(map));
+                return Ok(JsonValue::Null);
             }
             let key = match self.advance() {
                 Some(Token::String(s)) => s.clone(),
@@ -80,11 +79,14 @@ impl<'a> JsonParser<'a> {
                 _ => return Err("Expected ':'".to_string()),
             };
 
-            let value = self.parse_value();
+            let value = self.parse_value()?;
             map.insert(key, value);
             match self.peek() {
                 Some(Token::Comma) => {
                     self.advance();
+                    if let Some(Token::Close) = self.peek() {
+                        return Err("Trailing comma is invalid".to_string());
+                    }
                 }
                 Some(Token::Close) => (),
                 _ => return Err("Expected ',' or '}'".to_string()),
@@ -189,55 +191,6 @@ fn lex(input: &str) -> Result<Vec<Token>, String> {
     Ok(token)
 }
 
-fn parse(tokens: &[Token]) -> Result<(), String> {
-    if tokens.is_empty() {
-        return Err("Empty input is invalid JSON".to_string());
-    }
-    if tokens[0] != Token::Open {
-        return Err("JSON must start with '{'".to_string());
-    }
-    if tokens.len() == 2 && tokens[1] == Token::Close {
-        return Ok(());
-    }
-    let mut i = 1;
-    while i < tokens.len() {
-        if tokens[i] == Token::Close {
-            if i == tokens.len() - 1 {
-                return Ok(());
-            } else {
-                return Err("Unexpected tokens after valid closing brace".to_string());
-            }
-        }
-        match &tokens[i] {
-            Token::String(_) => i += 1,
-            _ => return Err("Expected a string key inside JSON object".to_string()),
-        }
-        if i >= tokens.len() || tokens[i] != Token::Colon {
-            return Err("Expected ':' separator after key".to_string());
-        }
-        i += 1;
-
-        if i >= tokens.len() {
-            return Err("Expected value after ':'".to_string());
-        }
-        match &tokens[i] {
-            Token::String(_) => i += 1,
-            _ => return Err("Expected a string key inside JSON object".to_string()),
-        }
-        if i <= tokens.len() {
-            if tokens[i] == Token::Comma {
-                i += 1;
-                if i < tokens.len() && tokens[i] == Token::Close {
-                    return Err("Trailing comma is invalid in JSON".to_string());
-                }
-            } else if tokens[i] != Token::Close {
-                return Err("Expected ',' or closing '}' after key-value pair".to_string());
-            }
-        }
-    }
-    Err("Missing closing brace '}'".to_string())
-}
-
 fn match_keyword(chars: &mut Peekable<Chars<'_>>, expected: &str) -> bool {
     for c in expected.chars() {
         if Some(c) != chars.next() {
@@ -257,8 +210,15 @@ fn main() {
         }
     };
     println!("{:?}", content);
-    let results = lex(&content).and_then(|x| parse(&x));
-    match results {
+    let tokens = match lex(&content) {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("Invalid JSON: {}", e);
+            process::exit(1);
+        }
+    };
+    let mut parser = JsonParser::new(&tokens);
+    match parser.parse() {
         Ok(_) => {
             println!("Valid JSON");
             process::exit(0);
