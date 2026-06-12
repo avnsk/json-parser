@@ -1,4 +1,4 @@
-use std::{fs, iter::Peekable, path::PathBuf, process, str::Chars};
+use std::{collections::HashMap, fs, iter::Peekable, path::PathBuf, process, str::Chars};
 
 use clap::{Parser, builder::Str};
 
@@ -25,6 +25,7 @@ enum JsonValue {
     Number(f64),
     Null,
     Boolean(bool),
+    Object(HashMap<String, JsonValue>),
 }
 
 struct JsonParser<'a> {
@@ -51,15 +52,45 @@ impl<'a> JsonParser<'a> {
         }
     }
 
+    fn parse_value(&mut self) -> Result<JsonValue, String> {
+        match self.advance() {
+            Some(Token::String(s)) => Ok(JsonValue::String(s.clone())),
+            Some(Token::True) => Ok(JsonValue::Boolean(true)),
+            Some(Token::False) => Ok(JsonValue::Boolean(false)),
+            Some(Token::Null) => Ok(JsonValue::Null),
+            Some(Token::Number(n)) => Ok(JsonValue::Number(*n)),
+            _ => Err("Expected a valid JSON value".to_string()),
+        }
+    }
+
     fn parse_object(&mut self) -> Result<JsonValue, String> {
         self.advance();
+        let mut map = HashMap::new();
         while let Some(token) = self.peek() {
             if *token == Token::Close {
                 self.advance();
-                return Ok(JsonValue::Null);
+                return Ok(JsonValue::Object(map));
             }
+            let key = match self.advance() {
+                Some(Token::String(s)) => s.clone(),
+                _ => return Err("Expected key string".to_string()),
+            };
+            match self.advance() {
+                Some(Token::Colon) => (),
+                _ => return Err("Expected ':'".to_string()),
+            };
+
+            let value = self.parse_value();
+            map.insert(key, value);
+            match self.peek() {
+                Some(Token::Comma) => {
+                    self.advance();
+                }
+                Some(Token::Close) => (),
+                _ => return Err("Expected ',' or '}'".to_string()),
+            };
         }
-        Err("Expected '}'".to_string())
+        Err("Unterminated object".to_string())
     }
 }
 
