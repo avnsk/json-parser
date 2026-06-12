@@ -1,6 +1,6 @@
 use std::{collections::HashMap, fs, iter::Peekable, path::PathBuf, process, str::Chars};
 
-use clap::Parser;
+use clap::{Parser, builder::Str};
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -17,6 +17,8 @@ enum Token {
     False,
     Number(f64),
     Null,
+    OpenBracket,
+    CloseBracket,
 }
 
 #[derive(Debug)]
@@ -25,6 +27,7 @@ enum JsonValue {
     Number(f64),
     Null,
     Boolean(bool),
+    Array(Vec<JsonValue>),
 }
 
 struct JsonParser<'a> {
@@ -54,6 +57,7 @@ impl<'a> JsonParser<'a> {
     fn parse_value(&mut self) -> Result<JsonValue, String> {
         match self.advance() {
             Some(Token::String(s)) => Ok(JsonValue::String(s.clone())),
+            Some(Token::OpenBracket) => self.parse_array(),
             Some(Token::True) => Ok(JsonValue::Boolean(true)),
             Some(Token::False) => Ok(JsonValue::Boolean(false)),
             Some(Token::Null) => Ok(JsonValue::Null),
@@ -94,6 +98,31 @@ impl<'a> JsonParser<'a> {
         }
         Err("Unterminated object".to_string())
     }
+
+    fn parse_array(&mut self) -> Result<JsonValue, String> {
+        let mut elements = Vec::new();
+        if let Some(Token::CloseBracket) = self.peek() {
+            self.advance();
+            return Ok(JsonValue::Array(elements));
+        }
+        loop {
+            let value = self.parse_value()?;
+            elements.push(value);
+            match self.peek() {
+                Some(Token::CloseBracket) => {
+                    self.advance();
+                    return Ok(JsonValue::Array(elements));
+                }
+                Some(Token::Comma) => {
+                    self.advance();
+                    if let Some(Token::CloseBracket) = self.peek() {
+                        return Err("Trailing comma in array is invalid".to_string());
+                    }
+                }
+                _ => return Err("Expected ',' or ']'".to_string()),
+            }
+        }
+    }
 }
 
 fn lex(input: &str) -> Result<Vec<Token>, String> {
@@ -101,6 +130,14 @@ fn lex(input: &str) -> Result<Vec<Token>, String> {
     let mut chars = input.chars().peekable();
     while let Some(&char) = chars.peek() {
         match char {
+            '[' => {
+                token.push(Token::OpenBracket);
+                chars.next();
+            }
+            ']' => {
+                token.push(Token::CloseBracket);
+                chars.next();
+            }
             '{' => {
                 token.push(Token::Open);
                 chars.next();
