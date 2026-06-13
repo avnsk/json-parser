@@ -1,13 +1,12 @@
 use std::{collections::HashMap, fs, iter::Peekable, path::PathBuf, process, str::Chars};
 
-use clap::{Parser, builder::Str};
-
+use clap::Parser;
 #[derive(Parser, Debug)]
 struct Args {
     file: PathBuf,
 }
 #[derive(PartialEq, Debug)]
-enum Token {
+pub enum Token {
     Close,
     Open,
     Colon,
@@ -22,15 +21,16 @@ enum Token {
 }
 
 #[derive(Debug)]
-enum JsonValue {
+pub enum JsonValue {
     String(String),
     Number(f64),
     Null,
     Boolean(bool),
     Array(Vec<JsonValue>),
+    Object(HashMap<String, JsonValue>),
 }
 
-struct JsonParser<'a> {
+pub struct JsonParser<'a> {
     tokens: &'a [Token],
     pos: usize,
 }
@@ -48,20 +48,41 @@ impl<'a> JsonParser<'a> {
         token
     }
     fn parse(&mut self) -> Result<JsonValue, String> {
-        match self.peek() {
-            Some(Token::Open) => self.parse_object(),
-            _ => Err("Invalid JSON: Expected '{'".to_string()),
+        let value = self.parse_value()?;
+        if self.pos < self.tokens.len() {
+            return Err("Unexpected tokens after JSON value".to_string());
         }
+        Ok(value)
     }
 
     fn parse_value(&mut self) -> Result<JsonValue, String> {
-        match self.advance() {
-            Some(Token::String(s)) => Ok(JsonValue::String(s.clone())),
+        match self.peek() {
+            Some(Token::String(_)) => {
+                if let Some(Token::String(s)) = self.advance() {
+                    Ok(JsonValue::String(s.clone()))
+                } else {
+                    Err("Expected string".to_string())
+                }
+            }
+            Some(Token::Open) => self.parse_object(),
             Some(Token::OpenBracket) => self.parse_array(),
-            Some(Token::True) => Ok(JsonValue::Boolean(true)),
-            Some(Token::False) => Ok(JsonValue::Boolean(false)),
-            Some(Token::Null) => Ok(JsonValue::Null),
-            Some(Token::Number(n)) => Ok(JsonValue::Number(*n)),
+            Some(Token::True) => {
+                self.advance();
+                Ok(JsonValue::Boolean(true))
+            }
+            Some(Token::False) => {
+                self.advance();
+                Ok(JsonValue::Boolean(false))
+            }
+            Some(Token::Null) => {
+                self.advance();
+                Ok(JsonValue::Null)
+            }
+            Some(Token::Number(n)) => {
+                let val = *n;
+                self.advance();
+                Ok(JsonValue::Number(val))
+            }
             _ => Err("Expected a valid JSON value".to_string()),
         }
     }
@@ -72,7 +93,7 @@ impl<'a> JsonParser<'a> {
         while let Some(token) = self.peek() {
             if *token == Token::Close {
                 self.advance();
-                return Ok(JsonValue::Null);
+                return Ok(JsonValue::Object(map));
             }
             let key = match self.advance() {
                 Some(Token::String(s)) => s.clone(),
@@ -100,6 +121,7 @@ impl<'a> JsonParser<'a> {
     }
 
     fn parse_array(&mut self) -> Result<JsonValue, String> {
+        self.advance();
         let mut elements = Vec::new();
         if let Some(Token::CloseBracket) = self.peek() {
             self.advance();
@@ -125,7 +147,7 @@ impl<'a> JsonParser<'a> {
     }
 }
 
-fn lex(input: &str) -> Result<Vec<Token>, String> {
+pub fn lex(input: &str) -> Result<Vec<Token>, String> {
     let mut token = Vec::new();
     let mut chars = input.chars().peekable();
     while let Some(&char) = chars.peek() {
@@ -159,27 +181,80 @@ fn lex(input: &str) -> Result<Vec<Token>, String> {
                 chars.next();
             }
             '"' => {
-                chars.next();
+                chars.next(); // Consume opening quote
                 let mut content = String::new();
                 let mut closed = false;
+
                 while let Some(&c) = chars.peek() {
-                    match &c {
+                    match c {
                         '"' => {
                             closed = true;
                             chars.next();
                             break;
                         }
+                        '\\' => {
+                            chars.next();
+                            if let Some(escaped) = chars.next() {
+                                match escaped {
+                                    '"' => content.push('"'),
+                                    '\\' => content.push('\\'),
+                                    '/' => content.push('/'),
+                                    'b' => content.push('\x08'),
+                                    'f' => content.push('\x0c'),
+                                    'n' => content.push('\n'),
+                                    'r' => content.push('\r'),
+                                    't' => content.push('\t'),
+                                    'u' => {
+                                        let mut hex = String::new();
+                                        for _ in 0..4 {
+                                            if let Some(h) = chars.next() {
+                                                hex.push(h);
+                                            }
+                                        }
+                                        if let Ok(code) = u32::from_str_radix(&hex, 16) {
+                                            if let Some(ch) = char::from_u32(code) {
+                                                content.push(ch);
+                                            } else {
+                                                return Err(
+                                                    "Invalid unicode escape value".to_string()
+                                                );
+                                            }
+                                        } else {
+                                            return Err(
+                                                "Invalid unicode escape hex syntax".to_string()
+                                            );
+                                        }
+                                    }
+                                    _ => {
+                                        return Err(format!(
+                                            "Invalid escape sequence: \\{}",
+                                            escaped
+                                        ));
+                                    }
+                                }
+                            } else {
+                                return Err("Unterminated string escape sequence".to_string());
+                            }
+                        }
                         _ => {
+                            if (c as u32) < 32 {
+                                return Err(format!(
+                                    "Unescaped control character (U+{:04X}) found inside string literal",
+                                    c as u32
+                                ));
+                            }
                             content.push(c);
                             chars.next();
                         }
-                    };
+                    }
                 }
+
                 if !closed {
                     return Err("Unterminated string literal".to_string());
                 }
                 token.push(Token::String(content));
             }
+
             't' => {
                 chars.next();
                 if match_keyword(&mut chars, "rue") {
@@ -207,11 +282,29 @@ fn lex(input: &str) -> Result<Vec<Token>, String> {
             '0'..='9' | '-' => {
                 let mut num_str = String::new();
                 while let Some(&c) = chars.peek() {
-                    if c.is_digit(10) || c == '-' || c == '.' {
+                    if c.is_ascii_digit()
+                        || c == '-'
+                        || c == '.'
+                        || c == 'e'
+                        || c == 'E'
+                        || c == '+'
+                    {
                         num_str.push(chars.next().unwrap());
                     } else {
                         break;
                     }
+                }
+                if num_str.starts_with("0") && num_str.len() > 1 && !num_str.starts_with("0.") {
+                    return Err(format!("Invalid leading zero in number: {}", num_str));
+                }
+                if num_str.starts_with("-0") && num_str.len() > 2 && !num_str.starts_with("-0.") {
+                    return Err(format!(
+                        "Invalid leading zero in negative number: {}",
+                        num_str
+                    ));
+                }
+                if num_str.starts_with('.') || num_str.starts_with("-.") {
+                    return Err(format!("Numbers must start with a digit: {}", num_str));
                 }
                 let num = num_str
                     .parse::<f64>()
@@ -263,6 +356,49 @@ fn main() {
         Err(err) => {
             eprintln!("Invalid JSON: {}", err);
             process::exit(1);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    fn run_test_file(path: &std::path::Path) -> bool {
+        let content = match fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(_) => return false,
+        };
+
+        let tokens = match lex(&content) {
+            Ok(t) => t,
+            Err(_) => return false,
+        };
+
+        let mut parser = JsonParser::new(&tokens);
+        parser.parse().is_ok()
+    }
+
+    #[test]
+    fn test_all_json_files() {
+        let dir_path = "test/";
+
+        if let Ok(paths) = fs::read_dir(dir_path) {
+            for path in paths {
+                let p = path.expect("Failed to read path").path();
+                let p_str = p.to_str().unwrap();
+
+                let is_expected_to_fail = p_str.contains("invalid") || p_str.contains("fail");
+
+                let result = run_test_file(&p);
+
+                if is_expected_to_fail {
+                    assert!(!result, "File should have been invalid but passed: {:?}", p);
+                } else {
+                    assert!(result, "File should have been valid but failed: {:?}", p);
+                }
+            }
         }
     }
 }
