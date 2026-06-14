@@ -61,3 +61,4 @@ Building this project taught me several critical lessons about language implemen
 
 2. ``` cargo build --release ```
 3. ```cargo run --<path of json file>```
+4. Tests validation ```cargo run test```
