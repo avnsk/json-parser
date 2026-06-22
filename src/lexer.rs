@@ -1,10 +1,10 @@
 use crate::token::Token;
-use std::{iter::Peekable, str::Chars};
+use std::{borrow::Cow, iter::Peekable, str::CharIndices};
 
-pub fn lex(input: &str) -> Result<Vec<Token>, String> {
+pub fn lex<'a>(input: &'a str) -> Result<Vec<Token<'a>>, String> {
     let mut token = Vec::new();
-    let mut chars = input.chars().peekable();
-    while let Some(&char) = chars.peek() {
+    let mut chars = input.char_indices().peekable();
+    while let Some(&(idx, char)) = chars.peek() {
         match char {
             '[' => {
                 token.push(Token::OpenBracket);
@@ -35,20 +35,25 @@ pub fn lex(input: &str) -> Result<Vec<Token>, String> {
                 chars.next();
             }
             '"' => {
+                let start_index = idx;
                 chars.next(); // Consume opening quote
                 let mut content = String::new();
                 let mut closed = false;
+                let mut end_index = start_index;
+                let mut needs_unescaping = false;
 
-                while let Some(&c) = chars.peek() {
+                while let Some(&(idx, c)) = chars.peek() {
                     match c {
                         '"' => {
                             closed = true;
+                            end_index = idx;
                             chars.next();
                             break;
                         }
                         '\\' => {
                             chars.next();
-                            if let Some(escaped) = chars.next() {
+                            needs_unescaping = true;
+                            if let Some((_, escaped)) = chars.next() {
                                 match escaped {
                                     '"' => content.push('"'),
                                     '\\' => content.push('\\'),
@@ -61,7 +66,7 @@ pub fn lex(input: &str) -> Result<Vec<Token>, String> {
                                     'u' => {
                                         let mut hex = String::new();
                                         for _ in 0..4 {
-                                            if let Some(h) = chars.next() {
+                                            if let Some((_, h)) = chars.next() {
                                                 hex.push(h);
                                             }
                                         }
@@ -106,7 +111,13 @@ pub fn lex(input: &str) -> Result<Vec<Token>, String> {
                 if !closed {
                     return Err("Unterminated string literal".to_string());
                 }
-                token.push(Token::String(content));
+                if needs_unescaping {
+                    token.push(Token::String(Cow::Owned(content)));
+                } else {
+                    token.push(Token::String(Cow::Borrowed(
+                        &input[start_index + 1..end_index],
+                    )));
+                }
             }
 
             't' => {
@@ -117,6 +128,7 @@ pub fn lex(input: &str) -> Result<Vec<Token>, String> {
                     return Err("Invalid token: expected 'true'".to_string());
                 }
             }
+
             'f' => {
                 chars.next();
                 if match_keyword(&mut chars, "alse") {
@@ -135,7 +147,7 @@ pub fn lex(input: &str) -> Result<Vec<Token>, String> {
             }
             '0'..='9' | '-' => {
                 let mut num_str = String::new();
-                while let Some(&c) = chars.peek() {
+                while let Some(&(_, c)) = chars.peek() {
                     if c.is_ascii_digit()
                         || c == '-'
                         || c == '.'
@@ -143,7 +155,7 @@ pub fn lex(input: &str) -> Result<Vec<Token>, String> {
                         || c == 'E'
                         || c == '+'
                     {
-                        num_str.push(chars.next().unwrap());
+                        num_str.push(chars.next().unwrap().1);
                     } else {
                         break;
                     }
@@ -175,10 +187,11 @@ pub fn lex(input: &str) -> Result<Vec<Token>, String> {
     Ok(token)
 }
 
-fn match_keyword(chars: &mut Peekable<Chars<'_>>, expected: &str) -> bool {
+fn match_keyword(chars: &mut Peekable<CharIndices<'_>>, expected: &str) -> bool {
     for c in expected.chars() {
-        if Some(c) != chars.next() {
-            return false;
+        match chars.next() {
+            Some((_, actual_char)) if actual_char == c => continue,
+            _ => return false,
         }
     }
     true

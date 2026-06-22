@@ -3,23 +3,23 @@ use crate::token::Token;
 use std::collections::HashMap;
 
 pub struct JsonParser<'a> {
-    tokens: &'a [Token],
+    tokens: &'a [Token<'a>],
     pos: usize,
 }
 
 impl<'a> JsonParser<'a> {
-    pub fn new(tokens: &'a [Token]) -> Self {
+    pub fn new(tokens: &'a [Token<'a>]) -> Self {
         Self { tokens, pos: 0 }
     }
-    fn peek(&self) -> Option<&Token> {
+    fn peek(&self) -> Option<&Token<'a>> {
         self.tokens.get(self.pos)
     }
-    fn advance(&mut self) -> Option<&Token> {
+    fn advance(&mut self) -> Option<&Token<'a>> {
         let token = self.tokens.get(self.pos);
         self.pos += 1;
         token
     }
-    pub fn parse(&mut self) -> Result<JsonValue, String> {
+    pub fn parse(&mut self) -> Result<JsonValue<'a>, String> {
         let value = self.parse_value()?;
         if self.pos < self.tokens.len() {
             return Err("Unexpected tokens after JSON value".to_string());
@@ -27,7 +27,7 @@ impl<'a> JsonParser<'a> {
         Ok(value)
     }
 
-    fn parse_value(&mut self) -> Result<JsonValue, String> {
+    fn parse_value(&mut self) -> Result<JsonValue<'a>, String> {
         match self.peek() {
             Some(Token::String(_)) => {
                 if let Some(Token::String(s)) = self.advance() {
@@ -59,7 +59,7 @@ impl<'a> JsonParser<'a> {
         }
     }
 
-    fn parse_object(&mut self) -> Result<JsonValue, String> {
+    fn parse_object(&mut self) -> Result<JsonValue<'a>, String> {
         self.advance();
         let mut map = HashMap::new();
         while let Some(token) = self.peek() {
@@ -92,7 +92,7 @@ impl<'a> JsonParser<'a> {
         Err("Unterminated object".to_string())
     }
 
-    fn parse_array(&mut self) -> Result<JsonValue, String> {
+    fn parse_array(&mut self) -> Result<JsonValue<'a>, String> {
         self.advance();
         let mut elements = Vec::new();
         if let Some(Token::CloseBracket) = self.peek() {

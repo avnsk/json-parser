@@ -1,11 +1,11 @@
-use std::collections::HashMap;
+use std::{borrow::Cow, collections::HashMap};
 
 #[derive(Debug)]
-pub enum JsonValue {
-    String(String),
+pub enum JsonValue<'a> {
+    String(Cow<'a, str>),
     Number(f64),
     Null,
     Boolean(bool),
-    Array(Vec<JsonValue>),
-    Object(HashMap<String, JsonValue>),
+    Array(Vec<JsonValue<'a>>),
+    Object(HashMap<Cow<'a, str>, JsonValue<'a>>),
 }

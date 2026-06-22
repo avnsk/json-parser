@@ -1,10 +1,12 @@
+use std::borrow::Cow;
+
 #[derive(PartialEq, Debug)]
-pub enum Token {
+pub enum Token<'a> {
     Close,
     Open,
     Colon,
     Comma,
-    String(String),
+    String(Cow<'a, str>),
     True,
     False,
     Number(f64),
